@@ -8,5 +8,6 @@ Several configurations are given (sampling rate, winsize...) for sevral frequenc
 python script to cluster spectral features
 plots the scatter UMAP projection, and the found clusters
 DBSCAN parameters need to be tuned specifically
+spectrogram of samples will be plotted in png by cluster folders 
 
 ![](./scatter_mel_HMF.png)
