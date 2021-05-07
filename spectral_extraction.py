@@ -11,9 +11,9 @@ This file computes several spectrograms with a given set of paramters.
 Spectrograms of size 128x128 will be saved in .npy files for each found sounfiles found in a given folder
 """
 
-folder = '../../DATA/BONAIRE/session1_20201217to20210126/' # path to a given recording station folder
+folder = '../../DATA/GUA_BREACH/session2_20210208_20210322/' # path to a given recording station folder
 winsize = 1024 # global STFT window size (we change the sample rate to tune the freq / time resolutions)
-source_fs = 512000 # TODO adapt to each session (some run at 256kHz)
+source_fs = 256000 # TODO adapt to each session (some run at 256kHz)
 
 def create_mel_filterbank(sample_rate, frame_len, num_bands, min_freq, max_freq):
     """
@@ -61,13 +61,14 @@ configs = [
 for c in configs:
     if c['mel']:
         c['melbank'] = create_mel_filterbank(c['fs'], winsize, 128, c['melstart'], c['fs']//2)
-    c['sos'] = signal.butter(3, c['fs']/source_fs, 'lp', output='sos')
+    if c['fs'] < source_fs:
+        c['sos'] = signal.butter(3, c['fs']/source_fs, 'lp', output='sos')
 
 
 print('doing ', folder)
 #get filenames list, filter wav files only (possibly sample a subset randomly for testing)
 fns = pd.Series(os.listdir(folder))
-fns = fns[fns.str.endswith('WAV')].sample(500)
+fns = fns[fns.str.endswith('WAV')] #.sample(500)
 
 # for each sound file
 for fn in tqdm(fns):
@@ -82,8 +83,9 @@ for fn in tqdm(fns):
     for c in configs:
 
         # low pass filter at next nyquist frequency and undersample the signal
-        csig = signal.sosfiltfilt(c['sos'], sig)
-        csig = csig[::(fs//c['fs'])]
+        if c['fs'] < source_fs:
+            csig = signal.sosfiltfilt(c['sos'], sig)
+            csig = csig[::(fs//c['fs'])]
 
         # compute the magnitude spectrogram using the STFT
         if c['id'] != 'HF':

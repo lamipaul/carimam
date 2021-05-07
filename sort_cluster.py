@@ -19,7 +19,7 @@ fns = pd.Series(os.listdir(folder))
 fns = fns[fns.str.endswith('_spec.npy')] #.sample(500)
 
 # for each configuration, we load spectrograms, project features, cluster, and plot spectrograms in pngs
-for config in configs:
+for config in configs[1:]:
     # arrays X and meta will hold features and metadata for each samples to be projected / clustered
     X, meta = [], []
     for f in tqdm(fns, desc='loading spectros for '+config, leave=False):
@@ -50,7 +50,7 @@ for config in configs:
     embed = project.fit_transform(X)
 
     # cluster the embedings (min_cluster_size and min_samples parameters need to be tuned)
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=40, min_samples=15).fit(embed) # au depart 50 et 3
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=100, min_samples=20).fit(embed) # au depart 50 et 3
     meta['cluster'] = clusterer.labels_
 
     # display information for the user to check whether the clustering has gone well or not
@@ -66,7 +66,7 @@ for config in configs:
     # For each cluster, we create a folder of png spectrograms
     for cluster, grp in meta.groupby('cluster'):
         # if the cluster is more than 300 samples big, we consider it is noise (to tune depending on dataset size)
-        if len(grp) > 300:
+        if len(grp) > 500:
             continue
         # create the cluster folder in the config folder
         os.system('mkdir -p '+outfolder+config+'/'+str(cluster))
