@@ -9,14 +9,7 @@ import hdbscan
 
 folder = '../../DATA/BONAIRE/session1_20201217to20210126/' # path to a given recording station folder
 outfolder = '../pngs/' # path to the folder to print clustered pngs
-configs = [ # list of spectrogram configs to be clustered
-    {'id':'mel_BBF', 'fs': 2000},
-    {'id':'mel_HBF', 'fs': 16000},
-    {'id':'mel_BMF', 'fs': 64000},
-    {'id':'mel_HMF', 'fs': 256000},
-    {'id':'stft_HMF', 'fs': 64000},
-    {'id':'stft_HF', 'fs': 256000}
-]
+configs = ['mel_BBF', 'mel_HBF', 'mel_BMF', 'mel_HMF', 'stft_HMF', 'stft_HF'] # list of spectrogram configs to be clustered
 sort = True # whether we sort each frequency bins by descending order (used to build an energy distribution image and eliminate time dependent features)
 fs = 512000 # TODO adapt to each recording station (some run at 256kHz)
 chunksize = 20 # size (in time bins) of chunks of spectrogram to cluster independantly
@@ -26,12 +19,12 @@ fns = pd.Series(os.listdir(folder))
 fns = fns[fns.str.endswith('_spec.npy')] #.sample(500)
 
 # for each configuration, we load spectrograms, project features, cluster, and plot spectrograms in pngs
-for c in configs:
+for config in configs:
     # arrays X and meta will hold features and metadata for each samples to be projected / clustered
     X, meta = [], []
-    for f in tqdm(fns, desc='loading spectros for '+c['id'], leave=False):
+    for f in tqdm(fns, desc='loading spectros for '+config, leave=False):
         # load the spectrogram from the .npy file
-        spectro = np.load(folder+f, allow_pickle=True).item()[c['id']]
+        spectro = np.load(folder+f, allow_pickle=True).item()[config]
 
         # cut the spectrogram in chunks time wise
         for offset in np.arange(0, spectro.shape[1]-chunksize, chunksize):
@@ -57,16 +50,17 @@ for c in configs:
     embed = project.fit_transform(X)
 
     # cluster the embedings (min_cluster_size and min_samples parameters need to be tuned)
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=100, min_samples=10).fit(embed) # au depart 50 et 3
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=40, min_samples=15).fit(embed) # au depart 50 et 3
     meta['cluster'] = clusterer.labels_
 
     # display information for the user to check whether the clustering has gone well or not
-    print('clusters for '+c['id'])
+    print('clusters for '+config)
     print(meta.groupby('cluster').agg({'fn':'nunique', 'offset':'count'})\
           .rename(columns={'fn':'n unique files', 'offset':'n samples'}))
     plt.scatter(embed[:,0], embed[:,1], c=clusterer.labels_ , cmap="Paired", s=1)
+    plt.colorbar()
     plt.show()
-    plt.savefig('scatter_'+c['id'])
+    plt.savefig('scatter_'+config)
     plt.close()
 
     # For each cluster, we create a folder of png spectrograms
@@ -74,17 +68,16 @@ for c in configs:
         # if the cluster is more than 300 samples big, we consider it is noise (to tune depending on dataset size)
         if len(grp) > 300:
             continue
-
         # create the cluster folder in the config folder
-        os.system('mkdir -p '+outfolder+c['id']+'/'+str(cluster))
+        os.system('mkdir -p '+outfolder+config+'/'+str(cluster))
 
         # for each sample in the cluster, we plot the spectrogram for quick visualisation of the clustering result
         for row in tqdm(grp.itertuples(), desc='ploting spectros for cluster '+str(cluster), total=len(grp), leave=False):
 
             # load the spectrogram from the .npy file
-            spectro = np.load(folder+row.fn, allow_pickle=True).item()[c['id']]
+            spectro = np.load(folder+row.fn, allow_pickle=True).item()[config]
             plt.imshow(np.log10(spectro[:, row.offset : row.offset+chunksize]), origin='lower', aspect='auto')
 
             # TODO convert the offset (in max pooled time bins) to seconds
-            plt.savefig(outfolder+c['id']+'/'+str(cluster)+'/'+row.fn[:-9]+'_'+str(row.offset))
+            plt.savefig(outfolder+config+'/'+str(cluster)+'/'+row.fn[:-9]+'_'+str(row.offset))
             plt.close()
