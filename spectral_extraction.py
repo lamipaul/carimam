@@ -21,7 +21,7 @@ def create_mel_filterbank(sample_rate, frame_len, num_bands, min_freq, max_freq)
     filter starting at `min_freq` and the last one stopping at `max_freq`.
     Returns the filterbank as a matrix suitable for a dot product against
     magnitude spectra created from samples at a sample rate of `sample_rate`
-    with a window length of `frame_len` samples. 
+    with a window length of `frame_len` samples.
     """
     # array of triangular filters' peaks (linear scale)
     peaks_mel = np.linspace(1127*np.log1p(min_freq/700), 1127*np.log1p(max_freq/700), num_bands+2)
@@ -46,60 +46,61 @@ def create_mel_filterbank(sample_rate, frame_len, num_bands, min_freq, max_freq)
     return filterbank.T
 
 """
-Set of spectrogram configurations (sampling rate, wether we yield a regular or mel spectrogram, mel start frequency), 
-each tuned to focus on a given type of vocalisations. e.g. BBF configuration samples at 2kHz. 
+Set of spectrogram configurations (sampling rate, wether we yield a regular or mel spectrogram, mel start frequency),
+each tuned to focus on a given type of vocalisations. e.g. BBF configuration samples at 2kHz.
 The output mel spectrogram will thus range from 0 to 1kHz, with 512 logarithmic spaced freq bins.
 """
-configs = [
-{'id':'BBF', 'fs': 2000, 'mel':True, 'nomel':False, 'melstart':0}, # tuned for fin whale vocs (~60Hz stationnary)
-{'id':'HBF', 'fs': 16000, 'mel':True, 'nomel':False, 'melstart':0}, # tuned for humpback whale vocs (~500Hz stationnary)
-{'id':'BMF', 'fs': 64000, 'mel':True, 'nomel':False, 'melstart':2000}, # tuned for clicks (sperm whales, delfinids) (~5-30kHz transitory)
-{'id':'HMF', 'fs': 256000 , 'mel':True, 'nomel':True, 'melstart':8000}, # tuned for HF clicks (deflinids, ziphius)
-{'id':'HF', 'fs': 256000, 'mel':False, 'nomel':True} # tuned for very HF clicks (/!\ for this config, we use a 256pts STFT window)
-]
+configs = {
+    'BBF': {'fs': 2000, 'mel':True, 'nomel':False, 'melstart':0}, # tuned for fin whale vocs (~60Hz stationnary)
+    'HBF': {'fs': 16000, 'mel':True, 'nomel':False, 'melstart':0}, # tuned for humpback whale vocs (~500Hz stationnary)
+    'BMF': {'fs': 64000, 'mel':True, 'nomel':False, 'melstart':2000}, # tuned for clicks (sperm whales, delfinids) (~5-30kHz transitory)
+    'HMF': {'fs': 256000 , 'mel':True, 'nomel':True, 'melstart':8000}, # tuned for HF clicks (deflinids, ziphius)
+    'HF': {'fs': 256000, 'mel':False, 'nomel':True} # tuned for very HF clicks (/!\ for this config, we use a 256pts STFT window)
+}
 # build a low pass filter used before resampling, and the melbank if needed
-for c in configs:
+for id, c in configs.items():
     if c['mel']:
         c['melbank'] = create_mel_filterbank(c['fs'], winsize, 128, c['melstart'], c['fs']//2)
     if c['fs'] < source_fs:
         c['sos'] = signal.butter(3, c['fs']/source_fs, 'lp', output='sos')
 
 
-print('doing ', folder)
-#get filenames list, filter wav files only (possibly sample a subset randomly for testing)
-fns = pd.Series(os.listdir(folder))
-fns = fns[fns.str.endswith('WAV')] #.sample(500)
+if __name__ == "__main__":
+    print('doing ', folder)
+    #get filenames list, filter wav files only (possibly sample a subset randomly for testing)
+    fns = pd.Series(os.listdir(folder))
+    fns = fns[fns.str.endswith('WAV')] #.sample(500)
 
-# for each sound file
-for fn in tqdm(fns):
-    try:
-        sig, fs = sf.read(folder+fn)
-    except:
-        print('failed with ',fn)
-        continue
+    # for each sound file
+    for fn in tqdm(fns):
+        try:
+            sig, fs = sf.read(folder+fn)
+        except:
+            print('failed with ',fn)
+            continue
 
-    # we build a dictionnary containing a spectrogram for each configuration
-    out = {}
-    for c in configs:
+        # we build a dictionnary containing a spectrogram for each configuration
+        out = {}
+        for id, c in configs.items():
 
-        # low pass filter at next nyquist frequency and undersample the signal
-        if c['fs'] < source_fs:
-            csig = signal.sosfiltfilt(c['sos'], sig)
-            csig = csig[::(fs//c['fs'])]
+            # low pass filter at next nyquist frequency and undersample the signal
+            if c['fs'] < source_fs:
+                csig = signal.sosfiltfilt(c['sos'], sig)
+                csig = csig[::(fs//c['fs'])]
 
-        # compute the magnitude spectrogram using the STFT
-        if c['id'] != 'HF':
-            f, t, spec = signal.stft(csig, fs=c['fs'], nperseg=winsize, noverlap=winsize//2)
-        else: # special winsize for HF
-            f, t, spec = signal.stft(csig, fs=c['fs'], nperseg=256, noverlap=128)
-        spec = np.abs(spec)
+            # compute the magnitude spectrogram using the STFT
+            if id != 'HF':
+                f, t, spec = signal.stft(csig, fs=c['fs'], nperseg=winsize, noverlap=winsize//2)
+            else: # special winsize for HF
+                f, t, spec = signal.stft(csig, fs=c['fs'], nperseg=256, noverlap=128)
+            spec = np.abs(spec)
 
-        # we undersample the spectrogram over the time dimension to get 128 time bins only
-        time_uds = spec.shape[1]//128
-        if c['nomel']:
-            out['stft_'+c['id']] = maximum_filter(spec, (1, time_uds))[:128, ::time_uds]
-        if c['mel']:
-            out['mel_'+c['id']] = maximum_filter(np.matmul(c['melbank'], spec), (1, time_uds))[:,::time_uds]
+            # we undersample the spectrogram over the time dimension to get 128 time bins only
+            time_uds = spec.shape[1]//128
+            if c['nomel']:
+                out['stft_'+id] = maximum_filter(spec, (1, time_uds))[:128, ::time_uds]
+            if c['mel']:
+                out['mel_'+id] = maximum_filter(np.matmul(c['melbank'], spec), (1, time_uds))[:,::time_uds]
 
-    # save the dictionnary of spectrograms with at the soundfile location, with the input filename + '_spec.npy'
-    np.save(folder+fn.rsplit('.', 1)[0]+'_spec.npy', out)
+        # save the dictionnary of spectrograms with at the soundfile location, with the input filename + '_spec.npy'
+        np.save(folder+fn.rsplit('.', 1)[0]+'_spec.npy', out)

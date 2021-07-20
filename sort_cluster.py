@@ -7,8 +7,8 @@ import umap
 import hdbscan
 
 
-folder = '../../DATA/BONAIRE/session1_20201217to20210126/' # path to a given recording station folder
-outfolder = '../pngs/' # path to the folder to print clustered pngs
+folder = '../../DATA/GUA_BREACH/session2_20210208_20210322/' # path to a given recording station folder
+outfolder = '../pngs_GUA_BREACH/' # path to the folder to print clustered pngs
 configs = ['mel_BBF', 'mel_HBF', 'mel_BMF', 'mel_HMF', 'stft_HMF', 'stft_HF'] # list of spectrogram configs to be clustered
 sort = True # whether we sort each frequency bins by descending order (used to build an energy distribution image and eliminate time dependent features)
 fs = 512000 # TODO adapt to each recording station (some run at 256kHz)
@@ -19,7 +19,7 @@ fns = pd.Series(os.listdir(folder))
 fns = fns[fns.str.endswith('_spec.npy')] #.sample(500)
 
 # for each configuration, we load spectrograms, project features, cluster, and plot spectrograms in pngs
-for config in configs[1:]:
+for config in configs[:]:
     # arrays X and meta will hold features and metadata for each samples to be projected / clustered
     X, meta = [], []
     for f in tqdm(fns, desc='loading spectros for '+config, leave=False):
@@ -57,7 +57,8 @@ for config in configs[1:]:
     print('clusters for '+config)
     print(meta.groupby('cluster').agg({'fn':'nunique', 'offset':'count'})\
           .rename(columns={'fn':'n unique files', 'offset':'n samples'}))
-    plt.scatter(embed[:,0], embed[:,1], c=clusterer.labels_ , cmap="Paired", s=1)
+    plt.scatter(embed[:,0], embed[:,1], c=clusterer.labels_ , cmap="tab20", s=1)
+    plt.title(folder)
     plt.colorbar()
     plt.show()
     plt.savefig('scatter_'+config)
@@ -77,7 +78,6 @@ for config in configs[1:]:
             # load the spectrogram from the .npy file
             spectro = np.load(folder+row.fn, allow_pickle=True).item()[config]
             plt.imshow(np.log10(spectro[:, row.offset : row.offset+chunksize]), origin='lower', aspect='auto')
-
             # TODO convert the offset (in max pooled time bins) to seconds
             plt.savefig(outfolder+config+'/'+str(cluster)+'/'+row.fn[:-9]+'_'+str(row.offset))
             plt.close()
