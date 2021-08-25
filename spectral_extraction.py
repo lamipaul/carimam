@@ -11,7 +11,8 @@ This file computes several spectrograms with a given set of paramters.
 Spectrograms of size 128x128 will be saved in .npy files for each found sounfiles found in a given folder
 """
 
-folder = '../../DATA/GUA_BREACH/session2_20210208_20210322/' # path to a given recording station folder
+folder = '../../DATA/LOT2/JAM_20210406_20320510/' # path to a given recording station folder
+outfolder = '../../results/JAM_20210406_20320510/'
 winsize = 1024 # global STFT window size (we change the sample rate to tune the freq / time resolutions)
 source_fs = 256000 # TODO adapt to each session (some run at 256kHz)
 
@@ -87,7 +88,8 @@ if __name__ == "__main__":
             if c['fs'] < source_fs:
                 csig = signal.sosfiltfilt(c['sos'], sig)
                 csig = csig[::(fs//c['fs'])]
-
+            else :
+                csig = sig
             # compute the magnitude spectrogram using the STFT
             if id != 'HF':
                 f, t, spec = signal.stft(csig, fs=c['fs'], nperseg=winsize, noverlap=winsize//2)
@@ -103,4 +105,4 @@ if __name__ == "__main__":
                 out['mel_'+id] = maximum_filter(np.matmul(c['melbank'], spec), (1, time_uds))[:,::time_uds]
 
         # save the dictionnary of spectrograms with at the soundfile location, with the input filename + '_spec.npy'
-        np.save(folder+fn.rsplit('.', 1)[0]+'_spec.npy', out)
+        np.save(outfolder+fn.rsplit('.', 1)[0]+'_spec.npy', out)
