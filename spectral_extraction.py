@@ -1,3 +1,5 @@
+import torch
+from multiprocessing import Pool
 import numpy as np
 from tqdm import tqdm
 import os
@@ -5,16 +7,14 @@ from scipy import signal
 from scipy.ndimage.filters import maximum_filter
 import soundfile as sf
 import pandas as pd
+import argparse
+
 
 """
 This file computes several spectrograms with a given set of paramters.
 Spectrograms of size 128x128 will be saved in .npy files for each found sounfiles found in a given folder
 """
-
-folder = '../../DATA/LOT2/JAM_20210406_20320510/' # path to a given recording station folder
-outfolder = '../../results/JAM_20210406_20320510/'
 winsize = 1024 # global STFT window size (we change the sample rate to tune the freq / time resolutions)
-source_fs = 256000 # TODO adapt to each session (some run at 256kHz)
 
 def create_mel_filterbank(sample_rate, frame_len, num_bands, min_freq, max_freq):
     """
@@ -62,47 +62,85 @@ configs = {
 for id, c in configs.items():
     if c['mel']:
         c['melbank'] = create_mel_filterbank(c['fs'], winsize, 128, c['melstart'], c['fs']//2)
-    if c['fs'] < source_fs:
-        c['sos'] = signal.butter(3, c['fs']/source_fs, 'lp', output='sos')
 
+def collate_fn(batch):
+    batch = list(filter(lambda x: x is not None, batch))
+    return torch.utils.data.dataloader.default_collate(batch) if len(batch) > 0 else None
+
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, list, length, fs):
+        super(Dataset).__init__()
+        self.list, self.length, self.fs = list, length, fs
+    def __getitem__(self, idx):
+        fn = self.list.iloc[idx]
+        if os.path.isfile(outfolder+fn.rsplit('.', 1)[0]+'_spec.npy'):
+            return None
+        try:
+            sig, fs = sf.read(folder+fn)
+            if len(sig) < self.length*self.fs:
+                return None
+            return sig[:self.length*self.fs], fn
+        except:
+            return None
+    def __len__(self):
+        return len(self.list)
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description='blabla')
+    parser.add_argument('folder', type=str, )
+    args = parser.parse_args()
+
+    folder = '../../DATA/'+args.folder+'/' # path to a given recording station folder
+    assert os.path.isdir(folder), "wrong folder name "+args.folder
+    outfolder = '../../results/'+args.folder+'/'
+    os.system('mkdir -p '+outfolder)
+
     print('doing ', folder)
     #get filenames list, filter wav files only (possibly sample a subset randomly for testing)
     fns = pd.Series(os.listdir(folder))
     fns = fns[fns.str.endswith('WAV')] #.sample(500)
+    source_fs = sf.info(folder+fns.iloc[0]).samplerate
+    length = 50
+    loader = torch.utils.data.DataLoader(Dataset(fns, length, source_fs), batch_size=8, num_workers=12, collate_fn=collate_fn)
+    gpu = torch.device('cuda')
+    for id, c in configs.items():
+        if c['fs'] < source_fs:
+            c['sos'] = signal.butter(3, c['fs']/source_fs, 'lp', output='sos')
+        if c['mel']:
+            c['melbank'] = torch.Tensor(c['melbank']).to(gpu)
+        c['time_uds'] = int(((length*c['fs'] - 1024)/512 +1)//128) if id != 'HF' else int(((length*c['fs'] - 256)/128 +1)//128)
+        c['maxpool'] = torch.nn.MaxPool1d((c['time_uds'],))
 
-    # for each sound file
-    for fn in tqdm(fns):
-        try:
-            sig, fs = sf.read(folder+fn)
-        except:
-            print('failed with ',fn)
-            continue
-
-        # we build a dictionnary containing a spectrogram for each configuration
-        out = {}
-        for id, c in configs.items():
-
-            # low pass filter at next nyquist frequency and undersample the signal
-            if c['fs'] < source_fs:
-                csig = signal.sosfiltfilt(c['sos'], sig)
-                csig = csig[::(fs//c['fs'])]
-            else :
-                csig = sig
-            # compute the magnitude spectrogram using the STFT
-            if id != 'HF':
-                f, t, spec = signal.stft(csig, fs=c['fs'], nperseg=winsize, noverlap=winsize//2)
-            else: # special winsize for HF
-                f, t, spec = signal.stft(csig, fs=c['fs'], nperseg=256, noverlap=128)
-            spec = np.abs(spec)
-
-            # we undersample the spectrogram over the time dimension to get 128 time bins only
-            time_uds = spec.shape[1]//128
-            if c['nomel']:
-                out['stft_'+id] = maximum_filter(spec, (1, time_uds))[:128, ::time_uds]
-            if c['mel']:
-                out['mel_'+id] = maximum_filter(np.matmul(c['melbank'], spec), (1, time_uds))[:,::time_uds]
-
-        # save the dictionnary of spectrograms with at the soundfile location, with the input filename + '_spec.npy'
-        np.save(outfolder+fn.rsplit('.', 1)[0]+'_spec.npy', out)
+    with torch.no_grad():
+        for batch in tqdm(loader):
+            if batch is None:
+                continue
+            sigs, fns = batch
+            # we build a dictionnary containing a spectrogram for each configuration
+            out = [{} for i in range(len(sigs))]
+            for id, c in configs.items():
+                # low pass filter at next nyquist frequency and undersample the signal
+                if c['fs'] < source_fs:
+                    csig = signal.sosfiltfilt(c['sos'], sigs, axis=-1)
+                    csig = torch.Tensor(csig[:,::(source_fs//c['fs'])].copy()).to(gpu)
+                else :
+                    csig = sigs.float().to(gpu)
+                # compute the magnitude spectrogram using the STFT
+                if id != 'HF':
+                    spec = torch.stft(csig, n_fft=winsize, hop_length=winsize//2, return_complex=False)
+                else: # special winsize for HF
+                    spec = torch.stft(csig, n_fft=256, hop_length=128, return_complex=False)
+                spec = spec.norm(p=2, dim=-1)
+                # we undersample the spectrogram over the time dimension to get 128 time bins only
+                if c['nomel']:
+                    maxpooled = c['maxpool'](spec)[:, :128].cpu().detach()
+                    for o, m in zip(out, maxpooled):
+                        o['stft_'+id] = m
+                if c['mel']:
+                    maxpooled = c['maxpool'](torch.matmul(c['melbank'], spec)).cpu().detach()
+                    for o, m in zip(out, maxpooled):
+                        o['mel_'+id] = m
+            # save the dictionnary of spectrograms with at the soundfile location, with the input filename + '_spec.npy'
+            for o, fn in zip(out, fns):
+                np.save(outfolder+fn.rsplit('.', 1)[0]+'_spec.npy', o)
